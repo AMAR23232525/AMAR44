@@ -3,127 +3,52 @@ name: Build Sovereign V41
 on:
   push:
     branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
-  workflow_dispatch:  # للتنفيذ اليدوي
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-latest  # أو macos-13 إذا أردت إصدار محدد
+    runs-on: macos-latest
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-      with:
-        fetch-depth: 0  # جلب كل التاريخ
-        submodules: recursive  # إذا كان هناك submodules
     
-    - name: Setup Xcode
-      uses: maxim-lobanov/setup-xcode@v1
-      with:
-        xcode-version: '15.0'  # أو أحدث إصدار
-    
+    # إزالة setup-xcode واستخدام الافتراضي
+    - name: Verify Xcode Version
+      run: |
+        xcodebuild -version
+        xcode-select -p
+        
     - name: Install Theos
       run: |
-        git clone --recursive https://github.com/theos/theos.git $HOME/theos
-        echo "THEOS=$HOME/theos" >> $GITHUB_ENV
-        echo "THEOS_MAKE_PATH=$HOME/theos/makefiles" >> $GITHUB_ENV
-        echo "SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path)" >> $GITHUB_ENV
-        echo "THEOS_DEVICE_IP=localhost" >> $GITHUB_ENV
-        echo "THEOS_DEVICE_PORT=2222" >> $GITHUB_ENV
-    
-    - name: Install Theos Dependencies
+        git clone --recursive https://github.com/theos/theos.git ~/theos
+        echo "THEOS=~/theos" >> $GITHUB_ENV
+        
+    - name: Install Dependencies
       run: |
-        brew install ldid
-        brew install dpkg
-        brew install gcc
-        brew install make
-        sudo gem install activesupport -v 6.1.7.3
+        brew install ldid dpkg make clang
+        # تثبيت Ruby gems إذا لزم الأمر
+        sudo gem install concurrent-ruby -v 1.2.2
         
-        # تثبيت iOS SDK إذا لزم الأمر
-        if [ ! -d "$(xcrun --sdk iphoneos --show-sdk-path)" ]; then
-          echo "iOS SDK not found, installing Xcode Command Line Tools..."
-          xcode-select --install
-        fi
-    
-    - name: Setup Theos Environment
+    - name: Build
       run: |
-        # إنشاء رابط رمزي للـ clang
-        if [ ! -f "$HOME/theos/toolchain/darwin/iphone/clang" ]; then
-          mkdir -p $HOME/theos/toolchain/darwin/iphone
-          ln -sf "$(which clang)" "$HOME/theos/toolchain/darwin/iphone/clang"
-        fi
-        
-        # إنشاء رابط رمزي للـ strip
-        if [ ! -f "$HOME/theos/toolchain/darwin/iphone/strip" ]; then
-          ln -sf "$(which strip)" "$HOME/theos/toolchain/darwin/iphone/strip"
-        fi
-        
-        # ضبط صلاحيات ملفات Theos
-        chmod +x $HOME/theos/bin/* 2>/dev/null || true
-    
-    - name: Build Project
-      run: |
-        # الانتقال إلى دليل المشروع إذا كان مختلفاً
-        if [ -f "Makefile" ]; then
-          echo "Building from root directory..."
-        elif [ -f "project/Makefile" ]; then
-          cd project
-          echo "Building from project directory..."
-        elif [ -f "src/Makefile" ]; then
-          cd src
-          echo "Building from src directory..."
-        fi
-        
-        # تنظيف البناء السابق
-        make clean 2>/dev/null || true
-        
-        # البناء
-        export THEOS=$HOME/theos
+        export THEOS=~/theos
         export THEOS_MAKE_PATH=$THEOS/makefiles
-        export TARGET=iphone:clang:latest:latest
-        export ARCHS=arm64 arm64e  # أو x86_64 للمحاكي
-        export DEBUG=0
         
-        echo "Building with Theos..."
+        # إذا كان هناك دليل محدد للمشروع
+        if [ -d "SovereignV41" ]; then
+          cd SovereignV41
+        fi
+        
+        # تنظيف وبناء
+        make clean 2>/dev/null || true
         make package
         
-        # عرض الملفات المبنية
-        echo "Built files:"
-        find . -name "*.deb" -o -name "*.dylib" -o -name "*.plist" 2>/dev/null | head -20
-    
-    - name: List Artifacts
-      run: |
-        echo "=== Listing all artifacts ==="
-        find . -type f \( -name "*.deb" -o -name "*.dylib" -o -name "*.bundle" \) 2>/dev/null
-        
-        if [ -d "packages" ]; then
-          echo "=== Packages directory ==="
-          ls -la packages/
-        fi
-        
-        if [ -d ".theos" ]; then
-          echo "=== Theos build directory ==="
-          find .theos -type f -name "*.dylib" 2>/dev/null
-        fi
-    
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: SovereignV41-Full-Package
+        name: Build-Output
         path: |
-          **/*.deb
-          **/*.dylib
-          **/*.plist
-          **/layout/
-        if-no-files-found: warn
-        retention-days: 7
-    
-    - name: Create Release if Tag
-      if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
-      with:
-        files: |
-          packages/*.deb
-          .theos/obj/*.dylib
-        generate_release_notes: true
+          *.deb
+          packages/
+          .theos/_/Payload/
